@@ -4,9 +4,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Databases (Crucial: prevents uploading your local vector DB)
-chroma_db/
-storage/
+
 
 # Local Data (Crucial: prevents uploading your private PDFs/Docs)
 data/*

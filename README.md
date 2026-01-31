@@ -1,126 +1,132 @@
 # 💃 Silly Agent: Witty, Concise, and Dangerous
 
-> "Information is a heavy burden; let me carry it for you. Just don't expect me to be nice about it." — **Silly**
+> “Information is a heavy burden; let me carry it for you. Just don’t expect me to be nice about it.” — **Silly**
 
-Silly Agent is a local, RAG-powered (Retrieval-Augmented Generation) AI assistant that doesn't suffer fools. She is designed to be sharp-tongued, incredibly concise, and context-aware. She doesn't just answer; she judges, cites her sources, and remembers your previous blunders using a sliding-window conversation memory.
-
-Built with **FastMCP**, **ChromaDB**, and **Ollama**, Silly runs entirely on your local machine—keeping your data private and your VRAM usage optimized.
+Silly Agent is a local, RAG-powered AI assistant that is sharp, concise, and context-aware. It retrieves answers from your local documents using OpenSearch vectors and Ollama embeddings, and exposes tools via FastMCP.
 
 ---
 
 ## ✨ Features
 
-- **Local RAG**: Ingests PDFs, DOCX, and TXT files into a local ChromaDB vector store.
-- **Dynamic Tool Discovery**: Uses FastMCP (SSE Transport) to discover and execute tools dynamically from the server.
-- **Witty Persona**: High-impact, low-word-count responses (Max 2-3 sentences).
-- **Short-Term Memory**: A dedicated `ConversationManager` tracks the last 6 messages for context-aware follow-ups.
-- **Self-Correction**: Automatically rewrites search queries if the initial retrieval fails.
-- **8GB VRAM Optimized**: Specifically tuned to run DeepSeek-R1 and Embeddings on consumer hardware.
+- Local RAG with OpenSearch vector index
+- FastMCP tool server (SSE transport)
+- Witty persona with short answers
+- Sliding-window conversation memory
+- Ollama embeddings + LLM (local inference)
 
 ---
 
 ## 🛠 Prerequisites
 
-1.  **Python 3.10+**
-2.  **Ollama**: [Download here](https://ollama.com/)
-3.  **uv**: The ultra-fast Python package installer. [Install here](https://docs.astral.sh/uv/getting-started/installation/)
-4.  **Ollama Models**:
-    ```bash
-    # The Brain (LLM)
-    ollama pull deepseek-r1:8b
-    
-    # The Librarian (Embeddings)
-    ollama pull mxbai-embed-large
-    ```
+- Python 3.10+
+- OpenSearch running locally (HTTPS)
+- Ollama installed with required models
+- `uv` (optional, recommended)
+
+---
+
+## 🔥 OpenSearch Verification
+```bash
+curl -k -u <USER>:<PASS> https://localhost:9200
+```
+## 🧩 Ollama Models
+```bash
+ollama pull deepseek-r1:8b
+ollama pull mxbai-embed-large
+```
 
 ---
 
 ## 🚀 Installation
 
-This project uses `uv` for lightning-fast dependency management.
+```bash
+git clone https://github.com/hsutar87/mcp-agent.git
+cd mcp-agent
+uv sync
+```
 
-1.  **Clone the repository**:
-    ```bash
-    git clone https://github.com/hsutar87/mcp-agent.git
-    cd mcp-agent
-    ```
+Or with pip:
 
-2.  **Sync Dependencies**:
-    ```bash
-    uv sync
-    ```
+```bash
+pip install -e .
+```
 
 ---
 
-## 📖 How to Use
+## 🔐 Environment Variables
+
+Create a `.env` file:
+
+```env
+OPENSEARCH_USER=admin
+OPENSEARCH_PASS=<YOUR_PASS>
+OPENSEARCH_HOST=localhost
+OPENSEARCH_PORT=9200
+```
+
+Add `.env` to `.gitignore`.
+
+---
+
+## 🧾 CA Certificate (Ubuntu)
+
+```bash
+sudo cp /etc/opensearch/root-ca.pem ./root-ca.pem
+sudo chown $USER:$USER ./root-ca.pem
+```
+
+---
+
+## 📖 Usage
 
 ### 1. Start the MCP Server
-Silly needs her toolbelt. Start the server in one terminal:
+
 ```bash
 uv run python -m src.mcp_server
+```
 
-### 2. Ingest your Data
-Drop your PDF, DOCX, or TXT files into the `data/` folder and run the ingestion:
+### 2. Ingest Documents
+
+Put PDFs/DOCX/TXT in `data/` and run:
+
 ```bash
 uv run python main.py --ingest
 ```
 
-**Example Interaction:**
-```text
-✨ Ingesting: Rumi_The_Book_of_Love.pdf
-Splitting into 124 chunks...
-Successfully ingested 124 chunks from Rumi_The_Book_of_Love.pdf
-✅ Ingestion Complete.
-```
+### 3. Chat
 
-### 3. Chat with Silly
-Run the agent and prepare for wit:
 ```bash
 uv run python main.py
 ```
 
-**Example Interaction:**
-```text
-💬 You: What does Rumi say about love?
-
-💃 Silly: 
-🔍 *Checking the toolbelt...*
-🛠️ *Digging through: search_local_docs...*
-🧠 *Thinking...*
-Rumi suggests that love is the bridge between you and everything, requiring the dissolution of the self. [Source: Rumi_The_Book_of_Love.pdf]
-──────────────────────────────
-
-💬 You: What was my first question?
-
-💃 Silly: 
-🧠 *Thinking...*
-You asked about Rumi's take on love, though I suspect you're just testing my memory. [Source: History]
-```
-
 ---
 
-## 💬 Interaction Commands
+## 💬 Commands
 
-- **`clear`**: Wipes Silly's short-term memory (useful if she gets confused).
-- **`exit`** or **`quit`**: Gracefully shuts down the session.
-- **Normal Text**: Ask anything. If she needs to check your files, she'll do it automatically.
+* `clear`: wipe memory
+* `exit` / `quit`: exit
+* Normal text: ask a question
 
 ---
 
 ## 📂 Project Structure
 
-- `src/reader.py`: Robust file parsing (PDF/Docx/Txt) with sanitization.
-- `src/vector_store.py`: ChromaDB & Ollama Embedding logic.
-- `src/memory.py`: Sliding-window conversation history management.
-- `src/agent.py`: The SillyAgent reasoning and dynamic tool-discovery loop.
-- `src/mcp_server.py`: FastMCP Server (SSE Transport).
-- `main.py`: Entry point for ingestion and the interactive chat loop.
+* `src/reader.py` — file parsing
+* `src/vector_store.py` — OpenSearch + Ollama embeddings
+* `src/memory.py` — conversation memory
+* `src/agent.py` — agent logic
+* `src/mcp_server.py` — FastMCP tools
+* `main.py` — ingestion + chat loop
 
 ---
 
-## ⚠️ Technical Notes
+## 🧪 Tool Test (Optional)
 
-- **VRAM**: Optimized for **8GB**. If the model is slow, it's likely "thinking."
-- **Thinking Tags**: You will see `<think>` blocks in the stream; this is DeepSeek-R1's internal reasoning process.
-- **Citations**: Silly is strictly instructed to cite sources as `[Source: filename]`.
-- **Status Indicators**: The UI provides real-time feedback (🔍 Checking, 🛠️ Digging, 🧠 Thinking) so you know the agent is active.
+```bash
+curl -s http://localhost:8000/execute/search_local_docs \
+  -d '{"query":"capital of France","limit":5}' \
+  -H "Content-Type: application/json"
+
+---
+## 📝 License
+This project is licensed under the [MIT License](LICENSE).

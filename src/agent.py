@@ -1,26 +1,36 @@
 import json
 import requests
-from typing import Dict, Any, AsyncGenerator
+from typing import Dict, Any, AsyncGenerator, List
+from colored import fg, attr
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from .memory import ConversationManager
+from pprint import pformat
+
 
 class SillyAgent:
     def __init__(self, model: str, sse_url: str = "http://localhost:8000/sse"):
         self.model = model
         self.ollama_url = "http://localhost:11434/api/chat"
         self.sse_url = sse_url
-        self.tools = []
+        self.tools: List[Dict[str, Any]] = []
         self.memory = ConversationManager()
 
-    async def _get_tools(self):
+    async def _get_tools(self) -> List[Dict[str, Any]]:
         async with sse_client(self.sse_url) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools_res = await session.list_tools()
-                return [{"name": t.name, "description": t.description, "parameters": t.inputSchema} for t in tools_res.tools]
+                return [
+                    {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.inputSchema,
+                    }
+                    for t in tools_res.tools
+                ]
 
-    async def _call_tool(self, name: str, args: Dict):
+    async def _call_tool(self, name: str, args: Dict = None) -> Any:
         async with sse_client(self.sse_url) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -29,45 +39,90 @@ class SillyAgent:
 
     async def run(self, user_input: str, system_prompt: str) -> AsyncGenerator[str, None]:
         if not self.tools:
-            yield "🔍 *Checking the toolbelt...*"
+            yield f"{fg('cyan')}🔍 Checking the toolbelt...{attr('reset')}\n"
             self.tools = await self._get_tools()
 
-        # Build messages with history
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(self.memory.get_history())
         messages.append({"role": "user", "content": user_input})
 
-        # 1. Decision Phase
         eval_payload = {
             "model": self.model,
-            "messages": messages + [{"role": "system", "content": f"Tools: {json.dumps(self.tools)}. Return JSON: {{\"tool\": \"name\", \"args\": {{...}}}} or {{\"tool\": \"none\"}}"}],
+            "messages": messages + [
+                {
+                    "role": "system",
+                    "content": (
+                        f"Tools: {json.dumps(self.tools)}. "
+                        "Return JSON: "
+                        "{\"tool\": \"name\", \"args\": {...}} "
+                        "or {\"tool\": \"none\"}"
+                    ),
+                }
+            ],
             "stream": False,
-            "format": "json"
+            "format": "json",
         }
-        
+
         res = requests.post(self.ollama_url, json=eval_payload).json()
-        decision = json.loads(res['message']['content'])
+        reasoning = res.get("message", {}).get("reasoning")
 
-        context = ""
-        if decision.get("tool") and decision["tool"] != "none":
-            yield f"🛠️ *Digging through: {decision['tool']}...*"
-            context = await self._call_tool(decision["tool"], decision["args"])
+        if reasoning:
+            yield f"{fg('cyan')}{attr('bold')}🧠 Reasoning:{attr('reset')}\n"
+            yield f"{fg('cyan')}{reasoning}{attr('reset')}\n\n"
 
-        # 2. Final Answer Phase
-        final_messages = messages + [{"role": "system", "content": f"CONTEXT: {context}"}]
-        yield "🧠 *Thinking...*\n"
-        
-        response = requests.post(self.ollama_url, json={"model": self.model, "messages": final_messages, "stream": True}, stream=True)
-        
+        decision = json.loads(res["message"]["content"])
+        tool_name = decision.get("tool")
+        tool_args = decision.get("args", {})
+
+        tool_output = None
+
+        if tool_name and tool_name != "none":
+            yield f"{fg('yellow')}🛠️ Running tool: {tool_name}{attr('reset')}\n"
+            try:
+                tool_output = await self._call_tool(tool_name, tool_args or None)
+                # Parse JSON if possible
+                try:
+                    tool_output = json.loads(tool_output)
+                except Exception:
+                    pass
+
+                yield f"{fg('magenta')}{attr('bold')}📦 Tool Output:{attr('reset')}\n"
+                yield f"{fg('magenta')}{pformat(tool_output)}{attr('reset')}\n\n"
+            except Exception as e:
+                yield f"{fg('red')}❌ Tool error: {e}{attr('reset')}\n"
+
+        final_messages = messages + [
+            {"role": "system", "content": f"TOOL_OUTPUT: {json.dumps(tool_output)}"}
+        ]
+
+        yield f"{fg('blue')}{attr('bold')}🤖 Assistant:{attr('reset')}\n"
+
+        response = requests.post(
+            self.ollama_url,
+            json={"model": self.model, "messages": final_messages, "stream": True},
+            stream=True,
+        )
+
         full_answer = ""
         for line in response.iter_lines():
-            if line:
-                chunk = json.loads(line.decode("utf-8"))
-                if not chunk.get("done"):
-                    content = chunk["message"]["content"]
-                    full_answer += content
-                    yield content
+            if not line:
+                continue
 
-        # Save to memory
+            chunk = json.loads(line.decode("utf-8"))
+            if chunk.get("done"):
+                continue
+
+            message = chunk.get("message", {})
+
+            if "reasoning" in message:
+                yield f"{fg('cyan')}{attr('bold')}🧠 Reasoning (stream):{attr('reset')}\n"
+                yield f"{fg('cyan')}{message['reasoning']}{attr('reset')}"
+                continue
+
+            content = message.get("content", "")
+            if content:
+                full_answer += content
+                yield f"{fg('green')}{content}{attr('reset')}"
+
         self.memory.add_message("user", user_input)
         self.memory.add_message("assistant", full_answer)

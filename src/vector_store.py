@@ -1,115 +1,137 @@
+import uuid
 import requests
-import chromadb
-from chromadb.config import Settings
+from opensearchpy import OpenSearch
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
+from tqdm import tqdm
+from dotenv import load_dotenv
+import os
+
 
 class VectorStoreManager:
-    """
-    Manages local vector storage using ChromaDB and Ollama for embeddings.
-    No Docker required; data is stored in a local directory.
-    """
+    def __init__(
+        self,
+        host: str = None,
+        port: int = None,
+        index_name: str = "rag_docs"
+    ):
+        load_dotenv() 
 
-    def __init__(self, storage_path: str = "./chroma_db", collection_name: str = "rag_docs"):
-        """
-        Initialize ChromaDB persistent client.
-        
-        Args:
-            storage_path: Local directory to save the database.
-            collection_name: Name of the collection (similar to an index).
-        """
-        self.client = chromadb.PersistentClient(path=storage_path)
-        
-        self.collection = self.client.get_or_create_collection(name=collection_name)
-        
-        self.ollama_url = "http://localhost:11434/api/embeddings"
-        self.embedding_model = "mxbai-embed-large"  # 1024 dimensions
-        
-        self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, 
-            chunk_overlap=100
+        self.host = host or os.getenv("OPENSEARCH_HOST", "localhost")
+        self.port = port or int(os.getenv("OPENSEARCH_PORT", 9200))
+        self.user = os.getenv("OPENSEARCH_USER", "admin")
+        self.password = os.getenv("OPENSEARCH_PASS", "")
+
+        self.index_name = index_name
+
+        self.client = OpenSearch(
+            hosts=[{"host": self.host, "port": self.port}],
+            http_auth=(self.user, self.password),
+            use_ssl=True,
+            verify_certs=True,
+            ca_certs="./root-ca.pem"
         )
+
+        try:
+            if not self.client.indices.exists(index=index_name):
+                self.client.indices.create(
+                    index=index_name,
+                    body={
+                        "settings": {"index.knn": True},
+                        "mappings": {
+                            "properties": {
+                                "content": {"type": "text"},
+                                "vector": {"type": "knn_vector", "dimension": 1024}
+                            }
+                        },
+                    },
+                )
+        except Exception as e:
+            print("OpenSearch connection failed:", e)
+            raise SystemExit("Please check OpenSearch and try again.")
+
+
+        self.splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        self.ollama_url = "http://localhost:11434/api/embed"
+        self.embedding_model = "mxbai-embed-large"
 
     def _get_embedding(self, text: str) -> List[float]:
-        """
-        Calls Ollama API to generate embeddings.
-        
-        Args:
-            text: The string to embed.
-        Returns:
-            A list of floats representing the vector.
-        """
         try:
-            response = requests.post(
+            resp = requests.post(
                 self.ollama_url,
-                json={"model": self.embedding_model, "prompt": text}
+                json={"model": self.embedding_model, "input": text},
+                timeout=30
             )
-            response.raise_for_status()
-            return response.json()["embedding"]
+            resp.raise_for_status()
+            return resp.json().get("embeddings", [[]])[0]
         except Exception as e:
-            print(f"Error calling Ollama: {e}")
-            raise
+            print("Embedding error:", e)
+            return []
 
     def ingest(self, content: str, metadata: Dict[str, Any]):
-        """
-        Chunks text, generates embeddings via Ollama, and stores in ChromaDB.
-        
-        Args:
-            content: Raw text from the document.
-            metadata: Dictionary containing source, type, etc.
-        """
         chunks = self.splitter.split_text(content)
-        
-        ids = []
-        embeddings = []
-        metadatas = []
-        documents = []
+        print(f"Splitting into {len(chunks)} chunks…")
 
-        for i, chunk in enumerate(chunks):
-            chunk_id = f"{metadata['source']}_chunk_{i}"
+        for chunk in tqdm(chunks, desc="Indexing chunks"):
             vector = self._get_embedding(chunk)
-            
-            ids.append(chunk_id)
-            embeddings.append(vector)
-            documents.append(chunk)
-            metadatas.append({**metadata, "chunk_index": i})
+            if not vector:
+                continue
 
-        self.collection.add(
-            ids=ids,
-            embeddings=embeddings,
-            metadatas=metadatas,
-            documents=documents
+            doc_id = str(uuid.uuid4())
+            body = {
+                "content": chunk,
+                "vector": vector,
+                **metadata
+            }
+            self.client.index(index=self.index_name, id=doc_id, body=body)
+
+    def rebuild_index(self, docs: List[Dict[str, Any]]):
+        self.client.indices.delete(index=self.index_name, ignore_unavailable=True)
+        self.client.indices.create(
+            index=self.index_name,
+            body={
+                "settings": {"index.knn": True},
+                "mappings": {
+                    "properties": {
+                        "content": {"type": "text"},
+                        "vector": {"type": "knn_vector", "dimension": 1024}
+                    }
+                },
+            },
         )
-        print(f"Successfully ingested {len(chunks)} chunks from {metadata['source']}")
+        for doc in docs:
+            self.ingest(doc["content"], doc["metadata"])
 
-    def search(self, query_text: str, source_filter: Optional[str] = None, limit: int = 3) -> List[Dict[str, Any]]:
-        """
-        Performs a semantic search with optional metadata filtering.
-        
-        Args:
-            query_text: The user's question.
-            source_filter: Optional filename to restrict search.
-            limit: Number of results to return.
-            
-        Returns:
-            List of dictionaries containing content and metadata.
-        """
-        query_vector = self._get_embedding(query_text)
-        
-       
-        where_clause = {"source": source_filter} if source_filter else None
+    def update_delta(self, docs: List[Dict[str, Any]]):
+        for doc in docs:
+            self.ingest(doc["content"], doc["metadata"])
 
-        results = self.collection.query(
-            query_embeddings=[query_vector],
-            n_results=limit,
-            where=where_clause
-        )
+    def search(self, query_text: str, limit: int = 5) -> List[Dict[str, Any]]:
+        query_vec = self._get_embedding(query_text)
+        if not query_vec:
+            return []
 
-        formatted_results = []
-        for i in range(len(results['documents'][0])):
-            formatted_results.append({
-                "content": results['documents'][0][i],
-                "metadata": results['metadatas'][0][i]
+        body = {
+            "size": limit,
+            "query": {
+                "knn": {
+                    "vector": {
+                        "vector": query_vec,
+                        "k": limit
+                    }
+                }
+            }
+        }
+
+        response = self.client.search(index=self.index_name, body=body)
+        hits = response.get("hits", {}).get("hits", [])
+        results = []
+        for h in hits:
+            src = h["_source"].get("source", "Unknown")
+            results.append({
+                "content": h["_source"]["content"],
+                "score": h["_score"],
+                "source": src
             })
-            
-        return formatted_results
+        return results
+
