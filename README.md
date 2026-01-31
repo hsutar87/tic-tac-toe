@@ -1,4 +1,3 @@
-```markdown
 # 💃 Silly Agent: Witty, Concise, and Dangerous
 
 > "Information is a heavy burden; let me carry it for you. Just don't expect me to be nice about it." — **Silly**
@@ -59,8 +58,6 @@ This project uses `uv` for lightning-fast dependency management.
 Silly needs her toolbelt. Start the server in one terminal:
 ```bash
 uv run python -m src.mcp_server
-```
-*The server will start on `http://localhost:8000/sse`.*
 
 ### 2. Ingest your Data
 Drop your PDF, DOCX, or TXT files into the `data/` folder and run the ingestion:
@@ -127,8 +124,3 @@ You asked about Rumi's take on love, though I suspect you're just testing my mem
 - **Thinking Tags**: You will see `<think>` blocks in the stream; this is DeepSeek-R1's internal reasoning process.
 - **Citations**: Silly is strictly instructed to cite sources as `[Source: filename]`.
 - **Status Indicators**: The UI provides real-time feedback (🔍 Checking, 🛠️ Digging, 🧠 Thinking) so you know the agent is active.
-
----
-
-**GitHub Repository**: [https://github.com/hsutar87/mcp-agent](https://github.com/hsutar87/mcp-agent)
-```
