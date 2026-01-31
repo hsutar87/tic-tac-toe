@@ -117,16 +117,8 @@ uv run python main.py
 * `src/agent.py` — agent logic
 * `src/mcp_server.py` — FastMCP tools
 * `main.py` — ingestion + chat loop
-
 ---
 
-## 🧪 Tool Test (Optional)
 
-```bash
-curl -s http://localhost:8000/execute/search_local_docs \
-  -d '{"query":"capital of France","limit":5}' \
-  -H "Content-Type: application/json"
-
----
 ## 📝 License
 This project is licensed under the [MIT License](LICENSE).
